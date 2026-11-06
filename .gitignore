@@ -1,0 +1,14 @@
+# Ejecutable compilado
+firmad
+# Material criptográfico y claves
+keys/
+*.pem
+# Datos y resultados generados en las pruebas
+firma.json
+firma.bin
+informe.txt
+resultados_extra.json
+documento_alterado.txt
+# Python
+__pycache__/
+*.pyc
