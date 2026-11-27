@@ -255,6 +255,74 @@ done:
     free(buf);
 }
 
+
+
+// mi granito de arena jseejsjesjjesjejesjesjesjesjes
+
+#include <pthread.h>
+
+#define MAX_COLA 10
+#define NUM_WORKERS 3
+
+typedef struct {
+    int fds[MAX_COLA];
+    int frente;
+    int final;
+    int contador;
+    pthread_mutex_t mutex;
+    pthread_cond_t no_vacia;
+    pthread_cond_t no_llena;
+} ColaConexiones;
+
+ColaConexiones cola;
+
+void cola_init() {
+    cola.frente = 0; cola.final = 0; cola.contador = 0;
+    pthread_mutex_init(&cola.mutex, NULL);
+    pthread_cond_init(&cola.no_vacia, NULL);
+    pthread_cond_init(&cola.no_llena, NULL);
+}
+
+void cola_push(int fd) {
+    pthread_mutex_lock(&cola.mutex);
+    while (cola.contador == MAX_COLA) {
+        pthread_cond_wait(&cola.no_llena, &cola.mutex);
+    }
+    cola.fds[cola.final] = fd;
+    cola.final = (cola.final + 1) % MAX_COLA;
+    cola.contador++;
+    pthread_cond_signal(&cola.no_vacia);
+    pthread_mutex_unlock(&cola.mutex);
+}
+
+int cola_pop() {
+    pthread_mutex_lock(&cola.mutex);
+    while (cola.contador == 0) {
+        pthread_cond_wait(&cola.no_vacia, &cola.mutex);
+    }
+    int fd = cola.fds[cola.frente];
+    cola.frente = (cola.frente + 1) % MAX_COLA;
+    cola.contador--;
+    pthread_cond_signal(&cola.no_llena);
+    pthread_mutex_unlock(&cola.mutex);
+    return fd;
+}
+
+void *worker(void *arg) {
+    (void)arg;
+    while (running) {
+        int fd = cola_pop();
+        if (fd == -1) break;
+        serve_client(fd);
+        close(fd);
+    }
+    return NULL;
+}
+
+// fin del granito 
+
+
+
 int main(void) {
     struct rlimit core = {.rlim_cur = 0, .rlim_max = 0};
     setrlimit(RLIMIT_CORE, &core);
@@ -275,21 +343,40 @@ int main(void) {
     if (bind(listen_fd, (struct sockaddr *)&address, sizeof(address)) < 0) { perror("bind"); goto error; }
     if (listen(listen_fd, 8) < 0) { perror("listen"); goto error; }
 
-    printf("firmad - Servicio de Firma Electronica Interna (prototipo academico)\n");
+    printf("firmad - Servicio de Firma Electronica Interna (CONCURRENTE)\n");
     printf("Escuchando en 127.0.0.1:%d | Ed25519 | clave: %s\n", SERVER_PORT, KEY_ID);
-    printf("Modo secuencial: un cliente por vez. Ctrl+C para detener.\n");
+    printf("Pool de hilos: %d workers. Ctrl+C para detener.\n", NUM_WORKERS);
     fflush(stdout);
 
+    // 1. Inicializar la cola
+    cola_init();
+
+    // 2. Crear los hilos trabajadores
+    pthread_t hilos[NUM_WORKERS];
+    for (int i = 0; i < NUM_WORKERS; i++) {
+        pthread_create(&hilos[i], NULL, worker, NULL);
+    }
+
+    // 3. Bucle del hilo aceptador (Productor)
     while (running) {
         int fd = accept(listen_fd, NULL, NULL);
         if (fd < 0) {
             if (errno == EINTR || !running || errno == EBADF) continue;
             perror("accept"); continue;
         }
-        serve_client(fd);
-        close(fd);
+        cola_push(fd);
     }
-    printf("Servidor detenido.\n");
+
+    printf("Servidor detenido. Cerrando hilos...\n");
+    
+    // 4. Apagar los hilos (mandar un -1 a la cola para que terminen)
+    for (int i = 0; i < NUM_WORKERS; i++) {
+        cola_push(-1);
+    }
+    for (int i = 0; i < NUM_WORKERS; i++) {
+        pthread_join(hilos[i], NULL);
+    }
+
     EVP_PKEY_free(private_key);
     EVP_PKEY_free(public_key);
     return 0;

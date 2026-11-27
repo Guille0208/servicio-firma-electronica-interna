@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -std=c11 -O2 -Wall -Wextra -Wpedantic
-PKG = $(shell pkg-config --cflags --libs openssl jansson)
+PKG = $(shell pkg-config --cflags --libs openssl jansson) -lpthread
 
 .PHONY: all clean
 all: firmad
